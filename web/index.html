@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>ESP32 RTSP Bridge</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: Arial;
+      background: #1a1a1a;
+      color: #fff;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: #4a9eff;
+      margin-bottom: 10px;
+    }
+
+    .section {
+      background: #2a2a2a;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+
+    input,
+    button {
+      padding: 10px;
+      margin: 5px 0;
+      border-radius: 4px;
+      border: 1px solid #444;
+      background: #333;
+      color: #fff;
+      width: 100%;
+    }
+
+    button {
+      background: #4a9eff;
+      cursor: pointer;
+      width: auto;
+      margin-right: 10px;
+    }
+
+    button:hover {
+      background: #3a8eef;
+    }
+
+    video {
+      width: 100%;
+      background: #000;
+      border-radius: 8px;
+      display: none;
+    }
+
+    video.active {
+      display: block;
+    }
+
+    label {
+      display: block;
+      margin: 10px 0 5px;
+      color: #aaa;
+    }
+
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-top: 10px;
+      display: none;
+    }
+
+    .status.success {
+      background: #2d5016;
+      color: #8bc34a;
+      display: block;
+    }
+
+    .status.error {
+      background: #5d1616;
+      color: #f44336;
+      display: block;
+    }
+
+    .stats {
+      font-size: 12px;
+      color: #888;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>ESP32 RTSP Bridge</h1>
+
+    <div class="section">
+      <div style="margin-top: 15px;">
+        <button onclick="saveAndStart()">Start Stream</button>
+        <button onclick="stopStream()">Stop</button>
+      </div>
+      <div id="status" class="status"></div>
+      <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="section">
+      <h2>Video Stream</h2>
+      <video id="video" controls autoplay muted></video>
+      <div id="videoStatus" style="margin-top:10px; color:#888;"></div>
+    </div>
+  </div>
+
+  <script src="jmuxer.min.js"></script>
+  <script>
+    let ws = null;
+    let jmuxer = null;
+
+    async function saveAndStart() {
+      const response = await fetch('/api/rtsp/start');
+      const text = await response.text();
+
+      if (response.ok) {
+        showStatus('Stream starting...', 'success');
+        setTimeout(connectWebSocket, 1000);
+      } else {
+        showStatus('Failed: ' + text, 'error');
+      }
+    }
+
+    function connectWebSocket() {
+      const wsUrl = 'ws://' + location.hostname + '/ws';
+      ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        console.log('WebSocket connected');
+        setupVideoPlayer();
+        updateStats();
+      };
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          const data = new Uint8Array(event.data);
+          let offset = 0;
+
+          // Loop through the batch until we reach the end
+          while (offset < data.length) {
+            // 1. Read the 2-byte length header
+            if (offset + 2 > data.length) break; // Safety check
+            const len = (data[offset] << 8) | data[offset + 1];
+            offset += 2;
+
+            // 2. Extract the actual RTP packet
+            if (offset + len > data.length) break; // Safety check
+            const rtpPacket = data.subarray(offset, offset + len);
+
+            // 3. Pass it to your existing logic
+            // Note: We pass rtpPacket.buffer to keep types consistent if needed, 
+            // or just update parseRTPPacket to accept Uint8Array directly.
+            parseRTPPacket(rtpPacket);
+
+            // 4. Move to next packet
+            offset += len;
+          }
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        showStatus('WebSocket error', 'error');
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket closed');
+        document.getElementById('video').classList.remove('active');
+      };
+    }
+
+    function setupVideoPlayer() {
+      const video = document.getElementById('video');
+      video.classList.add('active');
+
+      jmuxer = new JMuxer({
+        node: 'video',
+        mode: 'video',
+        flushingTime: 1000,
+        fps: 15,
+        debug: false
+      });
+
+      document.getElementById('videoStatus').textContent =
+        'Video player ready - waiting for data...';
+    }
+
+    let nalBuffer = []; // To store fragments of a single large frame
+
+    function parseRTPPacket(data) {
+      if (data.byteLength < 13) return; // Minimum RTP + 1 byte payload
+
+      const view = new Uint8Array(data);
+      const rtpHeaderPayloadOffset = 12;
+      const payload = view.subarray(rtpHeaderPayloadOffset);
+
+      const nalHeader = payload[0];
+      const nalType = nalHeader & 0x1F;
+
+      // 1. Single NAL Unit (SPS, PPS, or small P-Frame)
+      if (nalType >= 1 && nalType <= 23) {
+        const singleNal = new Uint8Array(payload.length + 4);
+        singleNal.set([0, 0, 0, 1], 0); // Add Annex-B Start Code
+        singleNal.set(payload, 4);
+        jmuxer.feed({ video: singleNal });
+      }
+
+      // 2. Fragmented NAL Unit (FU-A) - Most common for high-res frames
+      else if (nalType === 28) {
+        const fuHeader = payload[1];
+        const isStart = fuHeader & 0x80;
+        const isEnd = fuHeader & 0x40;
+        const actualNalType = fuHeader & 0x1F;
+        const reconstructionHeader = (nalHeader & 0xE0) | actualNalType;
+
+        const fragmentBody = payload.subarray(2);
+
+        if (isStart) {
+          nalBuffer = [0, 0, 0, 1, reconstructionHeader];
+          for (let i = 0; i < fragmentBody.length; i++) nalBuffer.push(fragmentBody[i]);
+        } else if (nalBuffer.length > 0) {
+          for (let i = 0; i < fragmentBody.length; i++) nalBuffer.push(fragmentBody[i]);
+        }
+
+        if (isEnd && nalBuffer.length > 0) {
+          jmuxer.feed({ video: new Uint8Array(nalBuffer) });
+          nalBuffer = []; // Reset for next fragment
+        }
+      }
+    }
+
+    async function stopStream() {
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+
+      if (jmuxer) {
+        jmuxer.destroy();
+        jmuxer = null;
+      }
+
+      await fetch('/api/rtsp/stop');
+      document.getElementById('video').classList.remove('active');
+      showStatus('Stream stopped', 'success');
+    }
+
+    function updateStats() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+      fetch('/api/rtsp/stats')
+        .then(r => r.json())
+        .then(stats => {
+          document.getElementById('stats').innerHTML =
+            `Packets: ${stats.packets} | ` +
+            `Bytes: ${(stats.bytes / 1024).toFixed(1)}KB | ` +
+            `Free heap: ${(stats.freeHeap / 1024).toFixed(1)}KB`;
+        });
+
+      setTimeout(updateStats, 5000);
+    }
+
+    function showStatus(msg, type) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = 'status ' + type;
+      setTimeout(() => el.style.display = 'none', 3000);
+    }
+  </script>
+</body>
+
+</html>
