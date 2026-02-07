@@ -2,6 +2,7 @@
 
 #include "../Rtsp/RtspClient.h"
 #include "ConfigApi.h"
+#include "OnvifApi.h"
 #include "RtspStreamApi.h"
 #include "StaticServeHandler.h"
 #include "WifiConfigApi.h"
@@ -19,6 +20,10 @@ AppWebServer::AppWebServer() : server(HTTP_PORT), ws(WS_ROUTE) {
   server.on("/api/rtsp/start", HTTP_GET, RtspStreamApi::handleStart);
   server.on("/api/rtsp/stop", HTTP_GET, RtspStreamApi::handleStop);
   server.on("/api/rtsp/stats", HTTP_GET, RtspStreamApi::handleStats);
+
+  server.on(
+      "/api/onvif/ptz", HTTP_POST, [](AsyncWebServerRequest* request) {}, NULL,
+      OnvifApi::handlePTZ);
 
   server.addHandler(&ws);
 }

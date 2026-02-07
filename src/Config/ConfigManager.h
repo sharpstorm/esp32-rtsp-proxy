@@ -10,6 +10,7 @@
 #define CONFIG_CAMERA_USER "cam-user"
 #define CONFIG_CAMERA_PASS "cam-pass"
 #define CONFIG_CAMERA_TRACK "cam-track"
+#define CONFIG_CAMERA_ONVIF_PORT "cam-onvif-port"
 
 #define WIFI_CONFIG_NAMESPACE "wifi-config"
 
@@ -18,6 +19,7 @@
 #define WIFI_CONFIG_DNS_NAME_KEY "dnsname"
 
 #define RTSP_DEFAULT_PORT 554
+#define ONVIF_DEFAULT_PORT 2020
 
 struct CameraConfig {
   String ip;
@@ -26,6 +28,7 @@ struct CameraConfig {
   String path;
   String trackName;
   uint16_t port;
+  uint16_t onvifPort;
 };
 
 struct WifiConfig {

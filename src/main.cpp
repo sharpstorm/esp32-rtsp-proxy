@@ -4,6 +4,7 @@
 #include <WiFiUdp.h>
 
 #include "Config/ConfigManager.h"
+#include "Onvif/PTZClient.h"
 #include "Rtsp/RtspClient.h"
 #include "Web/AppWebServer.h"
 #include "Wifi/MDnsClient.h"
@@ -52,6 +53,7 @@ void setup() {
 
   connectWiFi();
 
+  ptzClient.readConfig();
   mdnsClient.start();
   appServer.start();
 
