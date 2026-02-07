@@ -1,6 +1,6 @@
 # RTSP Proxy Server for ESP32-C3
 
-This is an implementation of a RTSP-to-WebSocket proxy that is optimimized for a single core ESP32-C3 running at 240MHz.
+This is an implementation of a RTSP-to-WebSocket proxy that is optimimized for a single core ESP32-C3 running at 160MHz.
 
 This is **not a full implementation** of the RTSP client spec, ***neither is it production-ready code***. Your mileage ***will*** vary.
 
@@ -10,7 +10,7 @@ This codebase patches the ESPAsyncWebServer library with custom constants to mak
 
 ## Watchdog Timer
 
-If the camera fails to connect in time, the RTOS watchdog timer trips and resets the ESP32. This is typically caused be a RTSP protocol error, please check if your camera supports UDP streams.
+If the camera fails to connect in time, the RTOS watchdog timer trips and resets the ESP32. This is typically caused by a RTSP protocol error, please check if your camera supports UDP streams.
 
 ## Camera Support
 
