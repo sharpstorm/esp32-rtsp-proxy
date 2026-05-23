@@ -52,6 +52,7 @@ void setup() {
   Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
 
   connectWiFi();
+  WiFi.setSleep(false);
 
   ptzClient.readConfig();
   mdnsClient.start();
@@ -61,8 +62,17 @@ void setup() {
 }
 
 void loop() {
-  appServer.cleanupWsClients();
+  static uint32_t lastCleanup = 0;
+  uint32_t now = millis();
+  if (now - lastCleanup > 1000) {  // once a second is plenty
+    appServer.cleanupWsClients();
+    lastCleanup = now;
+  }
+
   if (rtspClient.isStarted() && rtspClient.isConnected()) {
     appServer.proxyTraffic();
   }
+
+  ptzClient.loop();
+  delay(1);
 }

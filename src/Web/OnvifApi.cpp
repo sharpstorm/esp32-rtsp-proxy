@@ -17,11 +17,11 @@ void OnvifApi::handlePTZ(AsyncWebServerRequest* request, uint8_t* data,
       x = body.substring(xPos + 4, body.indexOf(",", xPos)).toFloat();
     if (yPos > 0)
       y = body.substring(yPos + 4, body.indexOf("}", yPos)).toFloat();
-    ptzClient.ptzMove(x, y, 0);
+    ptzClient.requestCmd(PTZCmd::Move, x, y, 0);
   } else if (body.indexOf("\"stop\"") > 0) {
-    ptzClient.ptzStop();
+    ptzClient.requestCmd(PTZCmd::Stop);
   } else if (body.indexOf("\"home\"") > 0) {
-    ptzClient.ptzHome();
+    ptzClient.requestCmd(PTZCmd::Home);
   }
 
   request->send(200, "text/plain", "OK");

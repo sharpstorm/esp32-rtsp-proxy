@@ -280,32 +280,86 @@
       const video = document.getElementById('video');
       video.classList.add('active');
 
+      resetDepacketizer();
+
       jmuxer = new JMuxer({
         node: 'video',
         mode: 'video',
-        flushingTime: 1000,
+        flushingTime: 200,   // lower = less latency; raise toward 500 if choppy
         fps: 15,
-        debug: false
+        debug: false,
+        onError: () => {
+          // MSE decode error -> drop back to the next keyframe and recover
+          resync();
+        }
       });
 
       document.getElementById('videoStatus').textContent =
         'Video player ready - waiting for data...';
     }
 
-    let nalBuffer = []; // To store fragments of a single large frame
+    // --- H.264 depacketizer state ---
+    let nalBuffer = [];            // accumulates one fragmented (FU-A) NAL
+    let expectedSeq = null;        // next RTP sequence number we expect
+    let frameCorrupt = false;      // a packet was lost inside the current NAL
+    let waitingForKeyframe = true; // drop output until the next clean GOP
+
+    function setVideoStatus(msg) {
+      const vs = document.getElementById('videoStatus');
+      if (vs) vs.textContent = msg;
+    }
+
+    // A packet was lost: the NAL we're building is incomplete, and every
+    // P-frame from here references data the decoder never received, so it
+    // would smear/block until the next keyframe. Drop everything until then
+    // instead of feeding garbage to the decoder.
+    function resync() {
+      if (!waitingForKeyframe) setVideoStatus('Packet loss - waiting for next keyframe...');
+      frameCorrupt = true;
+      waitingForKeyframe = true;
+      nalBuffer = [];
+    }
+
+    // Reached a fresh keyframe (SPS / IDR): safe to start decoding again.
+    function resume() {
+      if (waitingForKeyframe) setVideoStatus('Live');
+      waitingForKeyframe = false;
+    }
+
+    function resetDepacketizer() {
+      nalBuffer = [];
+      expectedSeq = null;
+      frameCorrupt = false;
+      waitingForKeyframe = true;
+    }
 
     function parseRTPPacket(data) {
-      if (data.byteLength < 13) return; // Minimum RTP + 1 byte payload
+      const view = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (view.length < 13) return;
 
-      const view = new Uint8Array(data);
-      const rtpHeaderPayloadOffset = 12;
-      const payload = view.subarray(rtpHeaderPayloadOffset);
+      // --- RTP header (skip CSRC list + extension header if present) ---
+      const cc = view[0] & 0x0f;
+      let headerLen = 12 + cc * 4;
+      if (view[0] & 0x10) { // extension header present
+        const extLen = (view[headerLen + 2] << 8) | view[headerLen + 3];
+        headerLen += 4 + extLen * 4;
+      }
+      const seq = (view[2] << 8) | view[3];
+      const payload = view.subarray(headerLen);
+      if (payload.length < 1) return;
+
+      // --- Detect loss / reordering via the sequence number ---
+      if (expectedSeq !== null && seq !== expectedSeq) resync();
+      expectedSeq = (seq + 1) & 0xffff; // 16-bit wrap
 
       const nalHeader = payload[0];
-      const nalType = nalHeader & 0x1F;
+      const nalType = nalHeader & 0x1f;
 
       // 1. Single NAL Unit (SPS, PPS, or small P-Frame)
       if (nalType >= 1 && nalType <= 23) {
+        if (nalType === 7 || nalType === 5) resume(); // SPS or IDR -> clean start
+        if (waitingForKeyframe) return;
+
         const singleNal = new Uint8Array(payload.length + 4);
         singleNal.set([0, 0, 0, 1], 0); // Add Annex-B Start Code
         singleNal.set(payload, 4);
@@ -315,23 +369,30 @@
       // 2. Fragmented NAL Unit (FU-A) - Most common for high-res frames
       else if (nalType === 28) {
         const fuHeader = payload[1];
-        const isStart = fuHeader & 0x80;
-        const isEnd = fuHeader & 0x40;
-        const actualNalType = fuHeader & 0x1F;
-        const reconstructionHeader = (nalHeader & 0xE0) | actualNalType;
-
+        const isStart = (fuHeader & 0x80) !== 0;
+        const isEnd = (fuHeader & 0x40) !== 0;
+        const actualNalType = fuHeader & 0x1f;
+        const reconstructionHeader = (nalHeader & 0xe0) | actualNalType;
         const fragmentBody = payload.subarray(2);
 
         if (isStart) {
+          frameCorrupt = false; // a new NAL begins; previous loss is behind us
+          if (actualNalType === 7 || actualNalType === 5) resume();
           nalBuffer = [0, 0, 0, 1, reconstructionHeader];
           for (let i = 0; i < fragmentBody.length; i++) nalBuffer.push(fragmentBody[i]);
         } else if (nalBuffer.length > 0) {
           for (let i = 0; i < fragmentBody.length; i++) nalBuffer.push(fragmentBody[i]);
+        } else {
+          frameCorrupt = true; // joined mid-NAL, its start fragment was lost
         }
 
-        if (isEnd && nalBuffer.length > 0) {
-          jmuxer.feed({ video: new Uint8Array(nalBuffer) });
-          nalBuffer = []; // Reset for next fragment
+        if (isEnd) {
+          // Only feed a frame that is whole AND part of a clean GOP.
+          if (!frameCorrupt && !waitingForKeyframe && nalBuffer.length > 0) {
+            jmuxer.feed({ video: new Uint8Array(nalBuffer) });
+          }
+          nalBuffer = [];
+          frameCorrupt = false;
         }
       }
     }

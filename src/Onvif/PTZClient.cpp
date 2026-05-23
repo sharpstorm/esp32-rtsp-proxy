@@ -167,4 +167,30 @@ bool PTZClient::sendONVIFCommand(String soapBody) {
   return true;
 }
 
+void PTZClient::requestCmd(PTZCmd cmd, float x, float y, float z) {
+  px = x;
+  py = y;
+  pz = z;
+  pending = cmd;
+}
+
+void PTZClient::loop() {
+  PTZCmd cmd = pending;
+  if (cmd == PTZCmd::None) return;
+  pending = PTZCmd::None;
+  switch (cmd) {
+    case PTZCmd::Move:
+      ptzMove(px, py, pz);
+      break;  // blocking I/O now runs
+    case PTZCmd::Stop:
+      ptzStop();
+      break;  // in loopTask, where it's OK
+    case PTZCmd::Home:
+      ptzHome();
+      break;
+    default:
+      break;
+  }
+}
+
 PTZClient ptzClient;

@@ -39,14 +39,14 @@ void AppWebServer::proxyTraffic() {
   while (int packetSize = rtspClient.parseRTSPPacket()) {
     // Safety check: specific RTSP packets can be huge.
     // If a SINGLE packet is too big for our batch, skip it or increase buffer.
-    if (packetSize + 2 > BATCH_BUFFER_SIZE) {
+    if (packetSize > BATCH_BUFFER_WITH_META_SIZE) {
       rtspClient.dropRTSPBuffer();
       continue;
     }
 
     // 2. Check if adding this packet would overflow the batch buffer
     // We need 2 bytes for the length header + the packet itself
-    if (batchIndex + 2 + packetSize > BATCH_BUFFER_SIZE) {
+    if (batchIndex + packetSize > BATCH_BUFFER_WITH_META_SIZE) {
       flushWsBatch();  // Send what we have so far
     }
 
@@ -69,13 +69,11 @@ void AppWebServer::proxyTraffic() {
 
 void AppWebServer::flushWsBatch() {
   // Iterate through clients (usually just one)
-  for (auto const& c : ws.getClients()) {
-    if (c.status() == WS_CONNECTED) {
+  for (auto& c : ws.getClients()) {
+    if (c.status() == WS_CONNECTED && !c.queueIsFull()) {
       // Check queue health before sending
-      if (!c.queueIsFull()) {  // Leave some headroom
-        ws.binary(c.id(), batchBuffer, batchIndex);
-        rtspClient.bytesReceived += batchIndex;
-      }
+      c.binary(batchBuffer, batchIndex);
+      rtspClient.bytesReceived += batchIndex;
     }
   }
   // Reset buffer for next time

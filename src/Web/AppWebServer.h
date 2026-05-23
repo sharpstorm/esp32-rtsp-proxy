@@ -19,6 +19,8 @@ using namespace std;
 #define WS_ROUTE "/ws"
 
 #define BATCH_BUFFER_SIZE 8192
+// Micro-optimization to reduce an add operation
+#define BATCH_BUFFER_WITH_META_SIZE 8190
 
 class AppWebServer {
  private:

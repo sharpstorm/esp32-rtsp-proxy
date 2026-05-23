@@ -11,6 +11,7 @@ void ConfigApi::getCameraConfig(AsyncWebServerRequest* request) {
   JsonObject root = response->getRoot().to<JsonObject>();
   root["ip"] = config.ip;
   root["port"] = config.port;
+  root["onvifPort"] = config.onvifPort;
   root["path"] = config.path;
   root["track"] = config.trackName;
   root["user"] = config.username;
@@ -23,7 +24,8 @@ void ConfigApi::saveCameraConfig(AsyncWebServerRequest* request,
   JsonObject reqBody = jsonBody.as<JsonObject>();
   if (reqBody["ip"].isUnbound() || reqBody["port"].isUnbound() ||
       reqBody["path"].isUnbound() || reqBody["user"].isUnbound() ||
-      reqBody["pass"].isUnbound() || reqBody["track"].isUnbound()) {
+      reqBody["pass"].isUnbound() || reqBody["track"].isUnbound() ||
+      reqBody["onvifPort"].isUnbound()) {
     request->send(400, MimeType::JSON, "{ \"success\": false }");
     return;
   }
@@ -31,6 +33,7 @@ void ConfigApi::saveCameraConfig(AsyncWebServerRequest* request,
   CameraConfig cfg;
   cfg.ip = reqBody["ip"].as<String>();
   cfg.port = reqBody["port"].as<uint16_t>();
+  cfg.onvifPort = reqBody["onvifPort"].as<uint16_t>();
   cfg.path = reqBody["path"].as<String>();
   cfg.username = reqBody["user"].as<String>();
   cfg.password = reqBody["pass"].as<String>();
